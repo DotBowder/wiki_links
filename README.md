@@ -18,7 +18,7 @@ pertaining to the page to page hyperlinking relationships of wikipedia.
 This can serve as a tool for discovering how different topics realate to eachother,
 as characterized by wikipedia linking relationships.
 
-This program uses lxml to parse the xml file, and extract useful information such as
+This program uses lxml (partially) to parse the xml file, and extract useful information such as
 website links, titles, and other information located on a wikipedia page. This information is then (currently) stored in a TSV file. The next step is to push this data to a neo4j database.
 
 I'm happy to say the wasteful full pass of the data file is no longer necessary for generating
