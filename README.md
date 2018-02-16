@@ -23,7 +23,7 @@ website links, titles, and other information located on a wikipedia page. This i
 
 I'm happy to say the wasteful full pass of the data file is no longer necessary for generating
 the original lookup table. The code now completes one full pass of the data file, and extracts
-the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage.
+the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage from this single pass.
 
 ***Helpful links:*** <br>
 Wikipedia "wikitext" parsing
