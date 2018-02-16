@@ -2,9 +2,9 @@
 # Started on: 2018-01-15 -- 2018 Jan 15
 # Github: https://github.com/DotBowder
 #
+# Version: 0.2
 #
 # This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
-# Located Here: https://meta.wikimedia.org/wiki/Data_dump_torrents
 #
 # This program was designed to take the 64GB xml file, enwiki-20170820-pages-articles.xml,
 # find hyperlinks on each page, and determine what wikipedia pages link to other wikipedia pages.
@@ -15,177 +15,205 @@
 # This can serve as a tool for discovering how different topics realate to eachother,
 # as characterized by wikipedia linking relationships.
 #
-#
 # This program uses lxml to parse the xml file, and extract useful information such as
 # website links, titles, and other information located on a wikipedia page.
 #
-# This program, currently, makes a full pass of the data file, to generate a lookup file
-# referencing the start and end lines of each XML <page> tag. This effectivly chops the
-# ingress data file into managable page chunks. The full pass isn't necessary if a lxml
-# prase object was fed each line, but, this is what made sense to me initially, before
-# exploring lxml deeper. This lxml parser may be implimented at a later date.
-# See: http://lxml.de/parsing.html
+# I'm happy to say the wasteful full pass of the data file is no longer necessary for generating
+# the original lookup table. The code now completes one full pass of the data file, and extracts
+# the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage.
+
+
+# Helpful links:
+#
+# Wikipedia "wikitext" parsing
+# https://en.wikipedia.org/wiki/Help:Wikitext#Links_and_URLs
+#
+# Wikipedia Data Dump Torrents
+# https://meta.wikimedia.org/wiki/Data_dump_torrents
+#
+# lxml syntax
+# http://lxml.de/parsing.html
+#
 
 
 
-
-import time
+# time for tracking process duration, sys for sys.exit()
+import time, sys
+# lxml for *some* data parsing
 from lxml import etree as ET
-from subprocess import Popen, PIPE
 
 
 data_file = 'data/enwiki-20170820-pages-articles.xml'
-lookup_file = 'data/pagebreaks.txt'
 
+
+# Generic Exit Function.
 def panic(data):
-    print("ERROR: The program has failed.\nInfo: {}".format(data))
-
-def parse_page_lines(data_file, lookup_file):
-    lineNumber = 0
-    pageNumber = 0
-    with open(data_file, 'r') as data_steam:
-        with open(lookup_file, 'w') as lookup_stream:
-            start_line = 0
-            for data_line in data_steam:
-                if '<page>' in data_line:
-                    start_line = lineNumber
-                if '</page>' in data_line:
-                    lookup_stream.write(str(start_line)+","+str(lineNumber)+"\n")
-                    pageNumber += 1
-                lineNumber += 1
-
-# start_time = time.time()
-# parse_page_lines(data_file, lookup_file) # Use with tee or to write data to file.
-# print("Elapsed Time: {}s".format("%.0f" % (time.time() - start_time)))
+    print("\n\nERROR: The program has Quit.\nInfo: {}".format(data))
+    sys.exit()
 
 
-
-def step_through_pages(data_file, lookup_file):
-    # Each line in the lookup file defines a new xml page tag
-    # <page> ..... </page>
-    # lookup_file format:  [<page> start line],[</page> end line]
-
-    # Because each line in the lookup file defines a <page></page>, we can
-    # step through each xml page tag in our giant xml data file
-
-    # Open Lookup File
-    with open(lookup_file, 'r') as lookup_stream:
-        # Open Data File
-        with open(data_file, 'r') as data_stream:
-
-            # We start on line 0 in the data file
-            dataLineNumber = 0
-            # We need a variable to track what page we're on. (The line number of the lookup file that we're on.)
-            pageNumber = 0
-
-            # Step through each line of the lookup file
-            for lookup_line in lookup_stream:
+def step_through_pages(data_file):
+    # Open data file, and look for "<page>" and ""</page>" tags.
+    # Feed lines of <page> </page> into lxml parser object & pageText string.
+    # Use lxml parser object and pageText string to extract Wiki ID, Wiki Title, & Wiki Links
 
 
-                # pageText will contain the full XML string of this <page></page>
-                # We will eventually run pageText through an HTML/XML parser.
-                pageText = ""
+    # Open Data File
+    with open(data_file, 'r') as data_stream:
 
-                # dataLine is a temporary variable to hold the current line of our data file.
-                dataLine = ""
+        # Variable to close the internal loop.
+        close = False
 
-                # Here, we take our current looup table line, and extract the page
-                # start line and end lines. This tells us how far we need to go.
-                pageStart, pageEnd = lookup_line.split("\n")[0].split(",")
-                pageStart = int(pageStart)
-                pageEnd = int(pageEnd)
+        # We start on line 0 in the data file
+        dataLineNumber = 0
 
+        # We need a variable to track what page we're on. (The line number of the lookup file that we're on.)
+        pageNumber = 0
 
-                # Now that we know how far we need to go in the data file, let's step
-                # through the datafile, until we've reached the starting line of our page.
-                while dataLineNumber < pageStart:
-                    try:
-                        # Try to read the next line, and increment the current line counter.
-                        data_line = data_stream.readline()
-                        dataLineNumber += 1
-                    except:
-                        # If we fail to read a line, throw an error.
-                        error = "Failed to read new line from data_stream while seeking for new page!\nData File: {}\nLine Number: {}".format(data_file,dataLineNumber)
-                        panic(error)
+        while close == False:
 
-                # Great, we've finally reached the start of this page. Now, we can gather
-                # the lines comprising this page and add them to the pageText variable.
-                # print("Page: {}\t\tStart: {}\t\tEnd: {}".format(pageNumber, pageStart, pageEnd))
-                while dataLineNumber <= pageEnd:
-                    try:
-                        # Try to read the next line, and increment the current line counter.
-                        # Add the current line to the pageText variable for later parsing.
-                        data_line = data_stream.readline()
-                        pageText = pageText + data_line
-                        dataLineNumber += 1
-                    except:
-                        # If we fail to read a line, throw an error.
-                        error = "Failed to read new line from data_stream while adding data to known page.\nData File: {}\nLine Number: {}".format(data_file,dataLineNumber)
+            # Create an lxml parser object to feed each data_line into. This
+            # parser object is re-generated for each new page. The goal was to feed each line
+            # to this parser object, but, it seems that this is unnecessary, as each wikipedia
+            # page is trivial in size, we just need to know when we've finished
+            # collecting one page in our string pageText variable.
+            parser = ET.XMLParser(remove_blank_text=True) # may look into using XMLPullParser
 
+            # pageText will contain a full string of this <page></page>.
+            # pageText can be processed by an HTML/XML parser.
+            pageText = ""
 
-                # Now that we have a strong of text comprising the XML data we
-                # wish to parse, it's time to do whatever we want to it. (process, cut, etc)
-                process_page(pageText)
-                if pageNumber > 12:
-                    break
+            # dataLine is a temporary variable to hold the current line of our data file.
+            dataLine = ""
 
-                # It's time to look at the next page, so let's increment our page counter.
-                pageNumber += 1
-                # print("\n")
+            # Read the first data_line from the data_stream
+            try:
+                data_line = data_stream.readline()
+                dataLineNumber += 1
+            except:
+                error = "Failed to read first line from data_stream!\nData File: {}\nLine Number: 0".format(data_file)
+                panic(error)
+
+            # Check if our current data_line contianes <page>. if it is contained, continue, if <page>
+            # isn't contained, continue reading each new data_line from the data_stream until we find <page>.
+            while '<page>' not in data_line:
+                try:
+                    # Try to read the next line, and increment the current line counter.
+                    # print("Waiting for xml tag <page>... Current dataLineNumber: {}".format(dataLineNumber))
+                    data_line = data_stream.readline()
+                    dataLineNumber += 1
+                except:
+                    # If we fail to read a line, throw an error.
+                    error = "Failed to read new line from data_stream while seeking for new page!\nData File: {}\nLine Number: {}\nLast Sucessful Line: {}".format(data_file,dataLineNumber,data_line)
+                    panic(error)
 
 
-def process_page(xml_string):
-    page = ET.XML(xml_string)
-    # print(xml_string)
+            # print("Found xml tag <page> on line {}".format(dataLineNumber))
+            # We know where the <page> starts, feed this first line into the parser, and
+            # add this line to the string variable pageText.
+            pageStart = dataLineNumber
+            pageText = pageText + data_line
+            parser.feed(data_line)
+
+
+            # Great, we've finally reached the start of this page. Now, we can gather
+            # the lines comprising this page and add them to the lxml parser object.
+            # Check and see if </page> is contained in this line. If it is not, continue
+            # adding the current line to the parser and pageText objects. Stop when </page> is found.
+            while '</page>' not in data_line:
+                try:
+                    # Try to read the next line, and increment the current line counter.
+                    # Add the current line to the pageText variable for later parsing.
+                    data_line = data_stream.readline()
+                    pageText = pageText + data_line
+                    parser.feed(data_line)
+                    dataLineNumber += 1
+                except:
+                    # If we fail to read a line, throw an error.
+                    error = "Failed to read new line from data_stream while adding data to known page.\nData File: {}\nLine Number: {}".format(data_file,dataLineNumber)
+
+
+            # Now that we have a string of text comprising the XML data we
+            # wish to parse, it's time to do whatever we want to it. (process, cut, etc)
+            # Close our lxml parsing object, and finalize it into the page variable.
+            parser = parser.close()
+            process_page(parser, pageText)
+            # print(pageText) # useful for troubleshooting/understanding what data we have currently.
+
+
+            # The if statement below allows us to stop the code on a given line. This is useful for development purposes.
+            # if pageNumber >= 100:
+            #     error = "A page limit is in effect. To continue beyond page {}, modify the step_through_pages function."
+            #     close = True
+
+            # It's time to look at the next page, so let's increment our page counter.
+            pageNumber += 1
+            # print("\n")
+
+def process_page(parser, pageText):
+
+    # Use our find_wikitext_links function to parse pageText, looking for [[WIKILINK]] objects.
+    # Returns a list of string objects which are Titles for various Wikipedia pages.
+    wiki_links = find_wikitext_links(pageText)
+
+    # Each <page> has several XML children. <title> and <id> are most notable here.
+    #
     children = []
     p_title = ''
     p_id = ''
     p_ns = ''
     p_redirect = ''
     p_restrictions = ''
-    for child in page.getchildren():
+    for child in parser.getchildren():
         if child.tag == "title":
-            p_title = child.text
+            p_title = child.text.replace(" ", "_")
         elif child.tag == "id":
             p_id = child.text
-        elif child.tag == "ns":
-            p_ns = child.text
-        elif child.tag == "revision":
-            p_revision = child
-        elif child.tag == "redirect":
-            p_redirect = child.values()
-            try:
-                print(child.values()[1])
-                error = "ERROR: When tagging this redirect object, we found more than 1 value. The program doesn't yet have a way to handle multiple values here. Please fix.\nXML Block: {}".format(xml_string)
-                panic(error)
-            except:
-                # Nothing to see here. This exception is a good thing.
-                pass
-        elif child.tag == "restrictions":
-            p_restrictions = child.text
-        else:
-            error = "ERROR: Unhandled Tag: {}".format(child.tag)
-            panic(error
-            )
     #     children.append((child, child.tag))
     # print(children)
 
-
-    p_text = ''
-    for child in p_revision:
-        if child.tag == "text":
-            p_text = child.text
-
-    p_links = False
-    if "http://" in p_text:
-        p_links = True
-    elif "https://" in p_text:
-        p_links = True
-    print(p_id, "\t", p_links, "\t", p_title)
+    # Print a table line showing the Wikipedia ID, the Link status, and Title of the Wikipedia Article.
+    # print(p_id + "\t" + p_title + "\n\t\tLinks:", wiki_links, "\n")
 
 
+    # Now that we've extracted our wiki_links, the <page> <title> and the <page> <id>, we're going to cram these objects
+    # into a single list so that we can write it to a TSV file or a database.
+    ######################################################################################################################
+    ########## This will be replaced by a function that sends neo4j CREATE requests to a neo4js database/server ##########
+    ######################################################################################################################
+    # The order goes: [0:WIKIPEDIA_ID,1:WIKIPEDIA_TITLE,2-INF:WIKI_LINKS]
+    masterlist = wiki_links
+    masterlist.insert(0,p_title)
+    masterlist.insert(0,p_id)
+    # Convert to TSV format and write to wikilinks datafile.
+    write_wikilinks_file("ramdisk/wikilinks.tsv", masterlist)
 
-print("ID", "\t", "LINKS", "\t", "TITLE")
-print("=================================")
 
-step_through_pages(data_file, lookup_file)
+def find_wikitext_links(text):
+    start = "[["
+    end = "]]"
+    wiki_links = []
+    text = text.replace("\n", "")
+
+    if start in text:
+        chunks = text.split(start)
+        for chunk in chunks:
+            if end in chunk:
+                if "|" in chunk:
+                    chunk = chunk.split("|")[0]
+                if "#" in chunk:
+                    chunk = chunk.split("#")[0]
+                wiki_links.append(chunk.split(end)[0].replace(" ", "_"))
+    return wiki_links
+
+def write_wikilinks_file(wikiLinksFile, masterlist):
+    # Convert to TSV format and write to wikilinks datafile.
+    print(masterlist[0])
+    with open(wikiLinksFile,"a") as wikilinks_stream:
+        line = ''
+        for item in masterlist:
+            line = line + item + "\t"
+        line = line + "\n"
+        wikilinks_stream.write(line)
+
+step_through_pages(data_file)
