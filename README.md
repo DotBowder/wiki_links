@@ -25,10 +25,7 @@ I'm happy to say the wasteful full pass of the data file is no longer necessary 
 the original lookup table. The code now completes one full pass of the data file, and extracts
 the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage.
 
-Next Goal: Add a new function to send "CREATE" requests to a neo4j database for understanding the relationship of Wikipedia articles linking to other Wikipedia articles.
-
-Helpful links:
-
+***Helpful links:*** <br>
 Wikipedia "wikitext" parsing
 https://en.wikipedia.org/wiki/Help:Wikitext#Links_and_URLs
 
@@ -37,3 +34,7 @@ https://meta.wikimedia.org/wiki/Data_dump_torrents
 
 lxml syntax
 http://lxml.de/parsing.html
+
+***Next Goal:*** <br>
+Add a new function to send "CREATE" requests to a neo4j database for understanding the relationship of Wikipedia articles linking to other Wikipedia articles.
+
