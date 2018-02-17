@@ -393,7 +393,7 @@ def load_data_from_wiki_file(wiki_file, page_batch_size=1000, exit_after_first_b
                 nodes.update(nodes_batch)       # Add batch nodes to master nodes dictionary
 
                 if save_on_batch:
-                    print("\t\tSaving current batch...")
+                    print("\tSaving current batch...")
                     if pages_tsv_file_name == "" or links_tsv_file_name == "":
                         error = "User requested we save-on-batch, but, the function [load_data_from_wiki_file] did not receive a file name to save page or link data to.\n"
                         error = error + "Please specifiy pages_tsv_file_name & links_tsv_file_name.\nProvided Files:\npages_tsv_file_name: {}\nlinks_tsv_file_name: {}".format(pages_tsv_file_name, links_tsv_file_name)
@@ -545,7 +545,7 @@ def main():
             if user_input == "y":
                 delete_file(pages_tsv_file_name)
                 delete_file(links_tsv_file_name)
-                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=True, save_on_batch=True, pages_tsv_file_name=pages_tsv_file_name, links_tsv_file_name=links_tsv_file_name )
+                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=False, save_on_batch=True, pages_tsv_file_name=pages_tsv_file_name, links_tsv_file_name=links_tsv_file_name )
 
             elif user_input == "n":
                 delete_file(pages_tsv_file_name)
