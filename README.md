@@ -61,8 +61,8 @@ Created Functions
     - find_tag() * Seeks through text and searches for a given tag
     - get_next_page() * Uses find_tag to seek through text looking for "<page>", compiles whole <page></page> text into a block
   - XML Search Helpers
-    - get_..._from_page_text() * Takes a block of text in, and returns whatever the function name implies "..."
-    - get_..._from_page_parser() * Takes a closed lxml parser object, and returns whatever the function name implies "..."
+    - get_..._from_page_text() * Takes a "<page>" block of text (from wiki database) in, and returns whatever the function name implies "..."
+    - get_..._from_page_parser() * Takes a closed lxml parser object (containint "<page>" xml object from wiki database), and returns whatever the function name implies "..."
   - Neo4J Helpers
     - connect * Returns graph from neo4j server after connecting
     - batch_create_nodes * Intakes a list of nodes in dictionary format. Queues nodes for transmission to neo4j server, and commits all nodes from dictionary in one transaction.
