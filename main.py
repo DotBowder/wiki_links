@@ -2,7 +2,7 @@
 # Started on: 2018-01-15 -- 2018 Jan 15
 # Github: https://github.com/DotBowder
 #
-# Version: 0.3
+# Version: 0.3.1
 #
 # This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
 #
@@ -58,6 +58,8 @@ def find_tag(tag, file_stream):
     while tag not in line and line_number < seek_limit:
         try:
             line = file_stream.readline()
+            if line == "":
+                return line, file_stream
             line_number += 1
         except:
             panic("Unable to read file_stream while scanning for tag.\nTag: {}\nLine Number: {}".format(tag, line_number))
@@ -65,7 +67,11 @@ def find_tag(tag, file_stream):
     return line, file_stream
 
 def get_next_page(file_stream):
+
     line, file_stream = find_tag("<page>", file_stream)
+    if line == "":
+        return line, file_stream
+
     page_text = line
     while "</page>" not in line:
         try:
@@ -332,45 +338,46 @@ def load_data_from_wiki_file(wiki_file, page_batch_size=1000, exit_after_first_b
             # Get on each <page>...</page> and process data in <page>
             page_text, wiki_file_stream = get_next_page(wiki_file_stream)
 
+            if "" != page_text:
 
-            ##### Get Basic Data - Start #####
-            ## Fast
-            # parser = ET.XMLParser()
-            # parser.feed(page_text)
-            # root = parser.close()
-            #
-            # page_id = get_id_from_page_parser(root)
-            # page_redirect = get_redirect_status_from_page_parser(root)
-            # page_title = get_page_title_from_page_parser(root)
+                ##### Get Basic Data - Start #####
+                ## Fast
+                # parser = ET.XMLParser()
+                # parser.feed(page_text)
+                # root = parser.close()
+                #
+                # page_id = get_id_from_page_parser(root)
+                # page_redirect = get_redirect_status_from_page_parser(root)
+                # page_title = get_page_title_from_page_parser(root)
 
-            ## Slower
-            # page_id = get_id_from_page_text(page_text)
-            # page_redirect = get_redirect_status_from_page_text(page_text)
-            # page_title = get_page_title_from_page_text(page_text)
+                ## Slower
+                # page_id = get_id_from_page_text(page_text)
+                # page_redirect = get_redirect_status_from_page_text(page_text)
+                # page_title = get_page_title_from_page_text(page_text)
 
-            ## Faster
-            page_id, page_redirect, page_title = get_id_and_redirect_status_and_title_from_page_text(page_text)
-            ##### Get Basic Data - End #####
-
-
-            ##### Get Link Data - Start #####
-            page_links = get_wiki_links_from_text(page_text)
-            ##### Get Link Data - End #####
+                ## Faster
+                page_id, page_redirect, page_title = get_id_and_redirect_status_and_title_from_page_text(page_text)
+                ##### Get Basic Data - End #####
 
 
-            ##### Store Data - Start #####
-            pages[page_title] = (page_id, page_redirect)
-            links[page_title] = page_links
-            ##### Store Data - End #####
+                ##### Get Link Data - Start #####
+                page_links = get_wiki_links_from_text(page_text)
+                ##### Get Link Data - End #####
 
 
-            if not save_on_batch:
-                ##### Store neo4j Node - Start #####
-                nodes_batch[page_title] = Node("Article", name=page_title, wiki_id=page_id, redirect=page_redirect)
-                ##### Store neo4j Node - End #####
+                ##### Store Data - Start #####
+                pages[page_title] = (page_id, page_redirect)
+                links[page_title] = page_links
+                ##### Store Data - End #####
 
 
-            # print("Page Nubmer: {}\tWiki Page ID: {}\tRedirect Page: {}\tNum of Links: {}".format(page_number, page_id, page_redirect, len(page_links)))
+                if not save_on_batch:
+                    ##### Store neo4j Node - Start #####
+                    nodes_batch[page_title] = Node("Article", name=page_title, wiki_id=page_id, redirect=page_redirect)
+                    ##### Store neo4j Node - End #####
+
+
+                # print("Page Nubmer: {}\tWiki Page ID: {}\tRedirect Page: {}\tNum of Links: {}".format(page_number, page_id, page_redirect, len(page_links)))
 
 
             # If we've collected as many pages as the page_batch_size, run a batch job.
@@ -408,6 +415,10 @@ def load_data_from_wiki_file(wiki_file, page_batch_size=1000, exit_after_first_b
                     done = True
                 else:
                     print("\tBatch: {}\tComplete...\tTotal Elapsed Time: {}s".format(batch_number, "%.2f" % (time.time() - read_wiki_file_start_time)))
+
+                if page_text == "":
+                    break
+
                 batch_number += 1
                 batch_start_time = time.time()
 
@@ -454,11 +465,12 @@ def main():
     print("Starting Program...\n")
 
     wiki_file = 'data/enwiki-20170820-pages-articles.xml'
+    wiki_file = "file.txt"
     default_profile_file_name = "user/profile.csv"
     pages_tsv_file_name = "data/pages.tsv"
     links_tsv_file_name = "data/links.tsv"
 
-    page_batch_size = 20000
+    page_batch_size = 1
 
     print("Would you like to connect to a neo4j server now?")
     user_input = input("Please enter (y) or (n): ")
@@ -534,7 +546,7 @@ def main():
             if user_input == "y":
                 delete_file(pages_tsv_file_name)
                 delete_file(links_tsv_file_name)
-                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=False, save_on_batch=True, pages_tsv_file_name=pages_tsv_file_name, links_tsv_file_name=links_tsv_file_name )
+                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=True, save_on_batch=True, pages_tsv_file_name=pages_tsv_file_name, links_tsv_file_name=links_tsv_file_name )
 
             elif user_input == "n":
                 delete_file(pages_tsv_file_name)
