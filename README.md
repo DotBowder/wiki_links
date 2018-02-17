@@ -59,10 +59,10 @@ Complete re-write from the ground up.
 Created Functions
   - Data Stream Helpers
     - find_tag() * Seeks through text and searches for a given tag
-    - get_next_page() * Uses find_tag to seek through text looking for "<page>", compiles whole <page></page> text into a block
+    - get_next_page() * Uses find_tag to seek through text looking for "page", compiles whole "page" "/page" text into a block
   - XML Search Helpers
-    - get_..._from_page_text() * Takes a "<page>" block of text (from wiki database) in, and returns whatever the function name implies "..."
-    - get_..._from_page_parser() * Takes a closed lxml parser object (containint "<page>" xml object from wiki database), and returns whatever the function name implies "..."
+    - get_..._from_page_text() * Takes a "page" block of text (from wiki database) in, and returns whatever the function name implies "..."
+    - get_..._from_page_parser() * Takes a closed lxml parser object (containint "page" xml object from wiki database), and returns whatever the function name implies "..."
   - Neo4J Helpers
     - connect * Returns graph from neo4j server after connecting
     - batch_create_nodes * Intakes a list of nodes in dictionary format. Queues nodes for transmission to neo4j server, and commits all nodes from dictionary in one transaction.
@@ -88,8 +88,8 @@ write_wikilinks_file
 
 V 0.0 -> 0.1
 parse_page_lines 
-- can step through a data file and generate a lookup table file, detailing the start and end lines containing <page> </page> xml tags.
+- can step through a data file and generate a lookup table file, detailing the start and end lines containing "page" "/page" xml tags.
 step_through_pages 
 - can iterate through the lookup table file, and use the start and end lines to walk back through the data file knowing right where to stop for each page. *inefficient? Yes, I'll impliment an lxml parser object and feed it the xml data later.
 process_page 
-- can look at the <page> xml object, and extract the wikipedia ID, Title, Text, and can determine if the Text of the page has a hyperlink.
+- can look at the "page" xml object, and extract the wikipedia ID, Title, Text, and can determine if the Text of the page has a hyperlink.
