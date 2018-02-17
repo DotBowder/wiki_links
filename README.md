@@ -8,7 +8,7 @@ Written by: Daniel Bowder <br>
 Started on: 2018-01-15 -- 2018 Jan 15 <br>
 Github: https://github.com/DotBowder <br>
 
-Version: 0.2 <br>
+Version: 0.3 <br>
 
 This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
 
