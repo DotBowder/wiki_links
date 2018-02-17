@@ -2,7 +2,7 @@
 # Started on: 2018-01-15 -- 2018 Jan 15
 # Github: https://github.com/DotBowder
 #
-# Version: 0.3.1
+# Version: 0.3
 #
 # This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
 #
@@ -465,7 +465,6 @@ def main():
     print("Starting Program...\n")
 
     wiki_file = 'data/enwiki-20170820-pages-articles.xml'
-    wiki_file = "file.txt"
     default_profile_file_name = "user/profile.csv"
     pages_tsv_file_name = "data/pages.tsv"
     links_tsv_file_name = "data/links.tsv"
