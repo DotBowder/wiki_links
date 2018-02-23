@@ -2,7 +2,7 @@
 # Started on: 2018-01-15 -- 2018 Jan 15
 # Github: https://github.com/DotBowder
 #
-# Version: 0.3
+# Version: 0.3.5
 #
 # This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
 #
@@ -17,10 +17,6 @@
 #
 # This program uses lxml to parse the xml file, and extract useful information such as
 # website links, titles, and other information located on a wikipedia page.
-#
-# I'm happy to say the wasteful full pass of the data file is no longer necessary for generating
-# the original lookup table. The code now completes one full pass of the data file, and extracts
-# the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage.
 
 
 # Helpful links:
@@ -34,183 +30,189 @@
 # lxml syntax
 # http://lxml.de/parsing.html
 
-import time, sys, random, getpass
-from lxml import etree as ET
-from py2neo import authenticate, Graph, Node, Relationship
+from py2neo import authenticate, Graph, Node, Relationship, NodeSelector
+import mmap, time, sys
+import getpass
 
-
-# Generic Exit Function.
 def panic(data):
     print("\nPANIC: The program has Quit.\nInfo: {}".format(data))
     sys.exit()
 
+def generate_page_master_list(mem_map, page_map_file='', stop_after=0, find_titles=True, find_links=False, print_tsv=False, save_tsv=False, return_list=True):
+    open_term = b'<page>'
+    close_term = b'</page>'
+    open_term_length = len(open_term)
+    close_term_length = len(close_term)
 
-# Data Stream Helpers
-def find_tag(tag, file_stream):
-    seek_limit = 1000 # Stop after X lines if tag not found.
+    page_list = []
 
-    try:
-        line = file_stream.readline()
-    except:
-        panic("Unable to read file_stream while scanning for tag.\nTag: {}\nLine Number: 0".format(tag))
+    page_start = 0
+    page_start = mem_map.find(open_term, page_start)
+    page_number = 1
 
-    line_number = 0
-    while tag not in line and line_number < seek_limit:
-        try:
-            line = file_stream.readline()
-            if line == "":
-                return line, file_stream
-            line_number += 1
-        except:
-            panic("Unable to read file_stream while scanning for tag.\nTag: {}\nLine Number: {}".format(tag, line_number))
+    if save_tsv:
+        save_stream = open(page_map_file, 'w')
 
-    return line, file_stream
+    while -1 != page_start:
+        links = ''
+        title = ''
 
-def get_next_page(file_stream):
+        page_end = mem_map.find(close_term, page_start)
+        if -1 != page_end:
+            if find_titles:
+                title = find_title(page_start, page_end + close_term_length, mem_map).replace("\n", "").replace(" ", "_")
+            if find_links:
+                links = find_links(page_start, page_end + close_term_length, mem_map)
+            if print_tsv:
+                print(str(page_start) + '\t' + str(page_end + close_term_length) + '\t' + title )
+            if save_tsv:
+                save_stream.write(str(page_start) + '\t' + str(page_end + close_term_length) + '\t' + title + '\n')
+            if return_list:
+                page_list.append((page_start, page_end + close_term_length, title, links))
+            # print(title)
+        page_number += 1
+        if 0 != stop_after and page_number > stop_after:
+            break
+        page_start = mem_map.find(open_term, page_end + close_term_length)
 
-    line, file_stream = find_tag("<page>", file_stream)
-    if line == "":
-        return line, file_stream
+    if save_tsv:
+        save_stream.close()
 
-    page_text = line
-    while "</page>" not in line:
-        try:
-            line = file_stream.readline()
-            page_text = page_text + line
-        except:
-            panic("Unable to read file_stream while gathering page_text.\nPage Text: {}".format(page_text))
+    if return_list:
+        return page_list
 
-    return page_text, file_stream
+def load_tsv_page_master_list(page_map_file, stop_after=0):
+    page_list = []
 
+    with open(page_map_file, 'r') as file_stream:
+        for line in file_stream:
+            split_line = line.split('\n')[0].split('\t')
+            page_list.append(  (int(split_line[0]), int(split_line[1]), split_line[2])  )
+            if 0 != stop_after and len(page_list) >= stop_after:
+                break
+    return page_list
 
-# XML Search Helpers
-def get_id_and_redirect_status_from_page_text(text):
-    parser = ET.XMLParser()
-    parser.feed(text)
-    root = parser.close()
+def generate_link_master_dict(mem_map, page_list, link_map_file='', print_tsv=False, save_tsv=False, return_list=True):
+    link_master_dict = {}
 
-    p_id = 0
-    p_redirect = False
-
-    for child in root.getchildren():
-        if child.tag == "id":
-            p_id = child.text
-        if child.tag == "redirect":
-            p_redirect = True
-
-    return p_id, p_redirect
-
-def get_id_and_redirect_status_and_title_from_page_text(text):
-    parser = ET.XMLParser()
-    parser.feed(text)
-    root = parser.close()
-
-    p_id = 0
-    p_redirect = False
-    p_title = ""
-
-    for child in root.getchildren():
-        if child.tag == "id":
-            p_id = int(child.text)
-        if child.tag == "redirect":
-            p_redirect = True
-        if child.tag == "title":
-            p_title = child.text.replace(" ", "_").split("/")[0]
-
-    return p_id, p_redirect, p_title
-
-def get_wiki_links_from_text(text):
-    start = "[["
-    end = "]]"
-    wiki_links = []
-    link = '                                                    '
-    text = text.replace("\n", "")
-
-    if start in text:
-        chunks = text.split(start)
-        for chunk in chunks:
-            if end in chunk:
-                if "|" in chunk:
-                    chunk = chunk.split("|")[0]
-                if "#" in chunk:
-                    chunk = chunk.split("#")[0]
-
-                link = chunk.split(end)[0].replace(" ", "_")
-
-                if "Project:AWB" != link:
-                    wiki_links.append(link)
-
-    return wiki_links
-
-def get_page_title_from_page_text(text):
-    parser = ET.XMLParser()
-    parser.feed(text)
-    root = parser.close()
-
-    p_title = False
-
-    for child in root.getchildren():
-        if child.tag == "title":
-            p_title = child.text.replace(" ", "_").split("/")[0]
-
-    return p_title
-
-def get_id_from_page_text(text):
-    parser = ET.XMLParser()
-    parser.feed(text)
-    root = parser.close()
-
-    p_id = ''
-
-    for child in root.getchildren():
-        if child.tag == "id":
-            p_id = child.text
-
-    return p_id
-
-def get_redirect_status_from_page_text(text):
-    parser = ET.XMLParser()
-    parser.feed(text)
-    root = parser.close()
-
-    p_redirect = False
-
-    for child in root.getchildren():
-        if child.tag == "redirect":
-            p_redirect = True
-
-    return p_redirect
-
-def get_redirect_status_from_page_parser(parser):
-    p_redirect = False
-
-    for child in parser.getchildren():
-        if child.tag == "redirect":
-            p_redirect = True
-
-    return p_redirect
-
-def get_id_from_page_parser(parser):
-    p_id = ''
-
-    for child in parser.getchildren():
-        if child.tag == "id":
-            p_id = child.text
-
-    return p_id
-
-def get_page_title_from_page_parser(parser):
-    p_title = False
-    for child in parser.getchildren():
-        if child.tag == "title":
-            p_title = child.text.replace(" ", "_").split("/")[0]
-    return p_title
+    x = 0
+    start_time = time.time()
+    for page in page_list:
+        links = find_links(page[0], page[1], mem_map)
+        for link in links:
+            link_master_dict[link] = 0
+        x += 1
+        if x % 177000 == 0:
+            print("\tPage: {}\tElapsed Time: {}".format(x, "%.0f" % (time.time() - start_time)))
 
 
+    if print_tsv:
+        x = 0
+        for link in link_master_dict:
+            print(str(x) + '\t' + link)
+            x += 1
 
-# Neo4J Helpers
-def neo4j_connect(server_and_port, username, password):
+    if save_tsv:
+        x = 0
+        with open(link_map_file, 'w') as save_stream:
+            for link in link_master_dict:
+                save_stream.write(str(x) + '\t' + link + '\n')
+                x += 1
+
+    if return_list:
+        return link_master_dict
+
+def load_tsv_link_master_dict(link_map_file, stop_after=0):
+    link_dict = {}
+
+    with open(link_map_file, 'r') as file_stream:
+        for line in file_stream:
+            split_line = line.split('\n')[0].split('\t')
+            # print(split_line, line)
+            if split_line != [""]:
+                link_dict[split_line[1]] = split_line[0]
+                if 0 != stop_after and len(link_dict) >= stop_after:
+                    break
+    return link_dict
+
+def compress_link_data_with_link_master_dict(mem_map, page_list, link_dict, link_data_file='', save_tsv=False):
+    pages_links_dict = {}
+
+    x = 0
+    start_time = time.time()
+    for page in page_list:
+        print(page)
+        page_links_list = []
+        for link in find_links(page[0], page[1], mem_map):
+            try:
+                page_links_list.append(link_dict[link])
+            except:
+                pass
+        page_links_list = list(set(page_links_list))
+        pages_links_dict[page[2]] = page_links_list
+        x += 1
+        if x % 177000 == 0:
+            print("\Page: {}\tElapsed Time: {}\tEg: {}".format(x, "%.0f" % (time.time() - start_time), page_links_list))
+
+
+    if save_tsv:
+        x = 0
+        with open(link_data_file, 'w') as save_stream:
+            for page in pages_links_dict:
+                output = page + '\t'
+                for number in pages_links_dict[page]:
+                    output = output + str(number) + '\t'
+                save_stream.write(output[:-1])
+                x += 1
+
+
+    return pages_links_dict
+
+
+def find_title(page_start, page_end, mem_map):
+    open_term = b'<title>'
+    close_term = b'</title>'
+    open_term_length = len(open_term)
+    close_term_length = len(close_term)
+
+    title_start = mem_map.find(open_term, page_start)
+    title_end = mem_map.find(close_term, page_start)
+    return mem_map[title_start + open_term_length: title_end].decode('utf-8')
+
+def find_links(page_start, page_end, mem_map):
+    open_term = b'[['
+    close_term = b']]'
+    close_term_opt = b'|'
+    open_term_length = len(open_term)
+    close_term_length = len(close_term)
+
+    links = []
+
+    link_start = mem_map.find(open_term, page_start)
+
+    while -1 != link_start and link_start < page_end:
+        link_end = mem_map.find(close_term, link_start)
+        opt_end = mem_map.find(close_term_opt, link_start)
+        if -1 != opt_end and opt_end < link_end:
+            link_end = opt_end
+        # print("Acquired Link: {}".format(mem_map[link_start + open_term_length : link_end].replace(b' ', b'_').replace(b'\n', b'').decode('utf-8')))
+        links.append(mem_map[link_start + open_term_length : link_end].replace(b' ', b'_').replace(b'\n', b'').decode('utf-8'))
+        link_start = mem_map.find(open_term, link_end)
+
+
+    return links
+
+
+def neo4j_connect(server_and_port="", username="", password="", load_default_profile=True, default_profile_file_name=""):
     print("Connecting to neo4j...")
+
+    if load_default_profile:
+        server_and_port, username = load_neo4j_profile(default_profile_file_name)
+        print("Loaded the following information:\nHostname: {}\nUsername: {}\n".format(server_and_port, username))
+        print("Please provide a password. [eg: \"my#insecure#password123!!\"] (no quotes)\n(Use a secure password... It's just common sense.)")
+        password = getpass.getpass("Enter Password: ")
+        print()
+
     try:
         authenticate(server_and_port, username, password)
         del password
@@ -222,368 +224,310 @@ def neo4j_connect(server_and_port, username, password):
     graph = Graph(server_and_port + '/db/data/')
     return graph
 
-def neo4j_batch_create_nodes(graph, node_dict):
-    try:
-        tx = graph.begin()
-        for n in node_dict:
-            tx.create(node_dict[n])
-        tx.commit()
-    except:
-        panic("Failed to commit batch to n4j.")
 
-def neo4j_DELETE_ALL(graph):
-    try:
-        user_input = input("WARNING: THE PROGRAM IS ATTEMPTING TO DELETE ALL NODES FROM NEO4J.\nWARNING: DO YOU WISH TO CONTINUE? (y/n): ")
-        if user_input == "y" or user_input == "Y":
-            try:
-                graph.delete_all()
-                print("NODES AND REALATIONSHIPS DELETED...")
-            except:
-                panic("Attempted to delete neo4j graph items. This failed...")
-        else:
-            print("ABORTED...")
-    except:
-        panic("Attempted to delete neo4j graph items. This failed...")
+def CLI_Continue(text):
+    u_in = input(text)
+    if "y" == u_in:
+        return 1
+    elif "n" == u_in:
+        return 2
+    else:
+        return 0
 
 
 
-# Disk Related Functions (save/load)
-def save_dict_to_tsv(file_name, dictionary, silent=False):
-    if not silent:
-        print("Saving Dictionary Table [{}]...".format(file_name))
-    save_dict_start_time = time.time()
-    with open(file_name, 'w') as file_stream:
-        for obj in dictionary:
-            output = str(obj)
-            # If our dictionary mutable object is a list, then we want to convert it to tsv string
-            if isinstance(dictionary[obj], list):
-                for i in range(0, len(dictionary[obj])):
-                    output = output + "\t" + str(dictionary[obj][i])
-            elif isinstance(dictionary[obj], tuple):
-                for i in range(0, len(dictionary[obj])):
-                    output = output + "\t" + str(dictionary[obj][i])
-            output =  output + "\n"
-            file_stream.write(output)
-    if not silent:
-        print("Saving Dictionary Table [{}] Complete...\nElapsed Time: {}s\n".format(file_name, "%.2f" % (time.time() - save_dict_start_time)))
+class FileManager():
+    def __init__(self, wiki_file, page_map_file, link_map_file, link_data_file):
+        self.wiki_file = wiki_file
+        self.page_map_file = page_map_file
+        self.link_map_file = link_map_file
+        self.link_data_file = link_data_file
 
-def append_dict_to_tsv(file_name, dictionary, silent=False):
-    if not silent:
-        print("Saving Dictionary Table [{}]...".format(file_name))
-    save_dict_start_time = time.time()
-    with open(file_name, 'a') as file_stream:
-        for obj in dictionary:
-            output = str(obj)
-            # If our dictionary mutable object is a list, then we want to convert it to tsv string
-            if isinstance(dictionary[obj], list):
-                for i in range(0, len(dictionary[obj])):
-                    output = output + "\t" + str(dictionary[obj][i])
-            elif isinstance(dictionary[obj], tuple):
-                for i in range(0, len(dictionary[obj])):
-                    output = output + "\t" + str(dictionary[obj][i])
-            output =  output + "\n"
-            file_stream.write(output)
-    if not silent:
-        print("Saving Dictionary Table [{}] Complete...\nElapsed Time: {}s\n".format(file_name, "%.2f" % (time.time() - save_dict_start_time)))
+    def Generate_And_Save_TSV_Page_Map(self, stop_after=0):
+        with open(self.wiki_file, 'r+b') as f:
+            with mmap.mmap(f.fileno(), 0) as mem_map:
+                print("Generating TSV Page Map...")
+                start_time = time.time()
+                generate_page_master_list(mem_map, stop_after=stop_after, save_tsv=True, page_map_file=self.page_map_file, return_list=False)
+                end_time = time.time()
+                print("\tComplete...")
+                print("\tTask Duration: {}s".format("%.0f" % (end_time - start_time)))
 
-def load_pages_from_tsv(file_name):
-    pages = {}
-    with open(file_name, 'r') as file_stream:
-        for line in file_stream:
-            line = line.split("\n")[0]
-            line = line.split("\t")
-            wiki_id = int(line[1])
-            redirect = bool(line[2])
-            pages[line[0]] = (wiki_id, redirect)
-    return pages
+    def Generate_And_Save_TSV_Link_Map(self, page_list):
+        # Link Map maps all of the links on all of the pages of wikipedia articles to a unique id.
+        #   * Using my archive, I acquired 34,000,000 unique page links. This went up to 40 million after adding the non-duplicates in the page list.
+        #   * This step does not yet check for duplicates in the page list.
+        with open(self.wiki_file, 'r+b') as f:
+            with mmap.mmap(f.fileno(), 0) as mem_map:
+                print("Generating Link Map...")
+                start_time = time.time()
+                generate_link_master_dict(mem_map, page_list, save_tsv=True, link_map_file=self.link_map_file, return_list=False)
+                end_time = time.time()
+                print("\tComplete...")
+                print("\tTask Duration: {}s".format("%.0f" % (end_time - start_time)))
 
-def load_links_from_tsv(file_name):
-    links = {}
-    with open(file_name, 'r') as file_stream:
-        for line in file_stream:
-            line = line.split("\n")[0]
-            line = line.split("\t")
-            links[line[0]] = line[1:]
-    return links
+    def Load_TSV_Page_Map(self, stop_after=0):
+        # Page Map maps the page name to the 'mmap' character list object
+        with open(self.page_map_file, 'r+b') as f:
+            print("Loading Page Map...")
+            start_time = time.time()
+            page_list = load_tsv_page_master_list(self.page_map_file, stop_after=stop_after)
+            end_time = time.time()
+            print("\tComplete...")
+            print("\tNumber of Pages: {}\n\tMemory Footprint of Page List: {}".format(len(page_list), sys.getsizeof(page_list)))
+            print("\tTask Duration: {}s".format("%.0f" % (end_time - start_time)))
+            return page_list
 
-def load_saved_tsv_files(pages_file, links_file):
-    pages = load_pages_from_tsv(pages_file)
-    # for obj in pages:
-    #     print(obj, pages[obj])
+    def Load_TSV_Link_Map(self, stop_after=0):
+        # Link Map maps a unique id to each link name           dict[page_name] = unique_id
+        with open(self.link_map_file, 'r+b') as f:
+            print("Loading Link Map...")
+            start_time = time.time()
+            link_dict = load_tsv_link_master_dict(self.link_map_file, stop_after=stop_after)
+            end_time = time.time()
+            print("\tComplete...")
+            print("\tNumber of Links: {}\n\tMemory Footprint of Link List: {}".format(len(link_dict), sys.getsizeof(link_dict)))
+            print("\tTask Duration: {}s".format("%.0f" % (end_time - start_time)))
+            return link_dict
 
-    links = load_links_from_tsv(links_file)
-    # for obj in links:
-    #     print(obj, links[obj])
+    def Compress_Link_Data_And_Save_TSV_Link_Data(self, page_list, link_dict):
+        # Link Data is loaded into a dict where, the key is the name of the page, and the data is a list of numbers... dict[page_name] = [0, 56, 230431, 123, 23344]
+        # Each number corresponds to a link name in the Link Map.
+        with open(self.wiki_file, 'r+b') as f:
+            with mmap.mmap(f.fileno(), 0) as mem_map:
 
-    return pages, links
+                print("Creating Compressed Link Data File...")
+                start_time = time.time()
+                compress_link_data_with_link_master_dict(mem_map, page_list, link_dict, save_tsv=True, link_data_file=self.link_data_file)
+                end_time = time.time()
+                print("\tComplete...")
+                print("\tTask Duration: {}s".format("%.0f" % (end_time - start_time)))
 
-def load_data_from_wiki_file(wiki_file, page_batch_size=1000, exit_after_first_batch=False, save_on_batch=False, pages_tsv_file_name="", links_tsv_file_name=""):
-    # Define wiki_file data & dictionaries to store page data
-    pages = {}
-    links = {}
-    nodes = {}
-
-    # Step through wiki_file.
-    print("Reading Pages from Wiki File...\t\tpage_batch_size: {}\texit_after_first_batch: {}\tsave_on_batch: {}".format(page_batch_size, exit_after_first_batch, save_on_batch))
-    read_wiki_file_start_time = time.time()
-    page_number = 0
-    batch_number = 0
-    with open(wiki_file, 'r') as wiki_file_stream:
-        batch_start_time = time.time()
-        done = False
-        nodes_batch = {}
-        while not done:
-            page_number += 1
-
-            # Get on each <page>...</page> and process data in <page>
-            page_text, wiki_file_stream = get_next_page(wiki_file_stream)
-
-            if "" != page_text:
-
-                ##### Get Basic Data - Start #####
-                ## Fast
-                # parser = ET.XMLParser()
-                # parser.feed(page_text)
-                # root = parser.close()
-                #
-                # page_id = get_id_from_page_parser(root)
-                # page_redirect = get_redirect_status_from_page_parser(root)
-                # page_title = get_page_title_from_page_parser(root)
-
-                ## Slower
-                # page_id = get_id_from_page_text(page_text)
-                # page_redirect = get_redirect_status_from_page_text(page_text)
-                # page_title = get_page_title_from_page_text(page_text)
-
-                ## Faster
-                page_id, page_redirect, page_title = get_id_and_redirect_status_and_title_from_page_text(page_text)
-                ##### Get Basic Data - End #####
+    def Get_Links_From_Wiki_File(self, page_start, page_end):
+        # Returns list of links for a given page
+        with open(self.wiki_file, 'r+b') as f:
+            with mmap.mmap(f.fileno(), 0) as mem_map:
+                return find_links(page_start, page_end, mem_map)
 
 
-                ##### Get Link Data - Start #####
-                page_links = get_wiki_links_from_text(page_text)
-                ##### Get Link Data - End #####
 
 
-                ##### Store Data - Start #####
-                pages[page_title] = (page_id, page_redirect)
-                links[page_title] = page_links
-                ##### Store Data - End #####
 
+class ConnectionManager():
+    def __init__(self, profile_dir="profiles/", profile_name="default", profile_ext=".profile", neo4j_graph_name="/db/data/"):
 
-                if not save_on_batch:
-                    ##### Store neo4j Node - Start #####
-                    nodes_batch[page_title] = Node("Article", name=page_title, wiki_id=page_id, redirect=page_redirect)
-                    ##### Store neo4j Node - End #####
+        self.connected = False
+        self.profile_dir = profile_dir
+        self.profile_ext = profile_ext
+        self.neo4j_graph_name = neo4j_graph_name
+        self.Load_Profile(profile_dir + profile_name + ".profile")
+        print("Profile Data Loaded:\n\tHostname: {}\n\tUsername: {}".format(self.hostname, self.username))
+        invalid = "That was an invalid response! Please type \"y\" or \"n\" without quotes.)"
 
+        question = "Would you like to connect? Enter (y/n): "
+        response = CLI_Continue(question)
+        while 0 == response: # invlid response
+            print(invalid)
+            response = CLI_Continue(question)
+        if response == 1: # y
+            self.password = getpass.getpass("\nPlease type your password. (It's invisible)\neg:        this!BADpassword123   < ----- *that is actually a terrible password*\nType Here: ")
+            self.Connect()
+        elif response == 2: # n
+            question_1 = "Would you like to enter a new hostname & username? Enter (y/n): "
+            response_1 = CLI_Continue(question_1)
+            while 0 == response_1: # invlid response
+                print(invalid)
+                response = CLI_Continue(question_1)
+            if response_1 == 1: # y
+                hostname_question = "Please type your hostname & port number.\neg:        localhost:7474\nType Here: "
+                username_question = "Please type your username.\n       eg: neo4j\nType Here: "
+                self.hostname = input(hostname_question)
+                self.username = input(username_question)
+                self.password = getpass.getpass("Please type your password. (It's invisible)\neg:        this!BADpassword123   < ----- *that is actually a terrible password*\nType Here: ")
+                question_2 = "\nUsername: {}\nHostname: {}\nWould you like to continue? Enter (y/n): "
+                response_2 = CLI_Continue(question_2)
+                while 0 == response_2:
+                    print(invalid)
+                    response_2 = CLI_Continue(question_2)
+                if response_2 == 1: # y
+                    self.Connect()
+                elif response_2 == 2: # n
+                    self.connected = False
+            elif response_1 == 2: # n
+                self.connected = False
+    # The Connection manager is in charge of connecting to and from the node4j server.
+    # It can open a profile file (eg: default.profile)
+    # The default profile is .../profiles/default.profile
+    # It can connect to the neo4j server.
+    # It can create realationships and nodes on the neo4js server using dictionaries and lists
+    # It can open a transaction object, queue items into that transaction object, and then send the queued items to the server.
+    #
 
-                # print("Page Nubmer: {}\tWiki Page ID: {}\tRedirect Page: {}\tNum of Links: {}".format(page_number, page_id, page_redirect, len(page_links)))
-
-
-            # If we've collected as many pages as the page_batch_size, run a batch job.
-            if page_number % page_batch_size == 0:
-                # Run Batch job here. Also can function as a way to stop the program early at a given page number. (done = True)
-                #       *worthy of note: it's assumed that not all of the data has been extracted from the wiki_file yet,
-                #           so, we can't run batches that rely on knowing the parameters of every node. Those need to be run later.
-
-
-                # neo4j_DELETE_ALL(neo4j_graph)
-                # neo4j_batch_create_nodes(neo4j_graph, nodes_batch)
-
-                nodes.update(nodes_batch)       # Add batch nodes to master nodes dictionary
-
-                if save_on_batch:
-                    print("\tSaving current batch...")
-                    if pages_tsv_file_name == "" or links_tsv_file_name == "":
-                        error = "User requested we save-on-batch, but, the function [load_data_from_wiki_file] did not receive a file name to save page or link data to.\n"
-                        error = error + "Please specifiy pages_tsv_file_name & links_tsv_file_name.\nProvided Files:\npages_tsv_file_name: {}\nlinks_tsv_file_name: {}".format(pages_tsv_file_name, links_tsv_file_name)
-                        panic(error)
-                    else:
-                        # Append pages dict to TSV
-                        append_dict_to_tsv("data/pages.tsv", pages, silent=True)
-                                                # Write links dict to TSV
-                        append_dict_to_tsv("data/links.tsv", links, silent=True)
-
-                        # Free up memory by clearing pages dict
-                        pages = {}
-                        # Free up memory by clearing links dict
-                        links = {}
-
-
-                if exit_after_first_batch:
-                    print("\tBatch: {}\tComplete...\tTotal Elapsed Time: {}s\n\tExiting Readfile...".format(batch_number, "%.2f" % (time.time() - read_wiki_file_start_time)))
-                    done = True
-                else:
-                    print("\tBatch: {}\tComplete...\tTotal Elapsed Time: {}s".format(batch_number, "%.2f" % (time.time() - read_wiki_file_start_time)))
-
-                if page_text == "":
-                    break
-
-                batch_number += 1
-                batch_start_time = time.time()
-
-
-    print("Read Wiki File Complete...\nElapsed Time: {}s\n".format("%.2f" % (time.time() - read_wiki_file_start_time)))
-    return pages, links, nodes
-
-def delete_file(file_name):
-    print("Deleting File! ({})".format(file_name))
-    with open(file_name, 'w') as file_stream:
-        file_stream.write("")
-    print("File Deleted! ({})\n".format(file_name))
-
-def load_neo4j_profile(file_name):
-    print("Loading neo4j profile...\tFile Name: {}".format(file_name))
-    try:
-        with open(file_name, 'r') as file_stream:
+    def Load_Profile(self, profile):
+        print("Loading neo4j profile...\tFile Name: {}".format(profile))
+        with open(profile, 'r') as file_stream:
             line1 = file_stream.readline()
             line1 = line1.split("\n")[0]
-            hostname, username = line1.split(",")
+            self.hostname, self.username = line1.split(",")
             file_stream.close()
+        if '' == self.hostname or '' == self.username:
+            print("Failed to load profile information! Usetting default profile info instead. (localhost:7474, neo4j)")
+            self.hostname = "localhost:7474"
+            self.username =  "neo4j"
         print("Sucessfully loaded profile!\n")
-    except:
-        panic("Failed to load profile...")
-    return hostname, username
 
-def save_neo4j_profile(hostname, username, file_name):
-    print("Saving neo4j Profile...\tFile Name: {}".format(file_name))
+    def Connect(self):
+        print("\nInitiating server authentication... ")
+        authenticate(self.hostname, self.username, self.password)
+        try:
+            del self.password
+            self.connected == True
+            print("Attempting to retreive server Graph...")
+            self.graph = Graph(self.hostname + self.neo4j_graph_name)
+            print("\tGraph Acquired!\n")
+            self.node_selector_single = NodeSelector(self.graph)
+        except:
+            del self.password
+            self.connected == False
+            print("Failed!")
+
+    def Find_Node_By_Name(self, name, node_type="Article"):
+        # Use our FileManager.node_selector_single we created from our graph after signing into the server for the first time..
+        return self.node_selector_single.select(node_type, name=name).limit(1).first()
+
+    def Create_Relationships_On_Server_From_Page_List_And_Link_Dict(self, page_list, file_manager, batch_size=1000):
+        # Open a neo4j transaction using the file-manager self functions (Transaction_open, Transaction_...)
+        # Iterate through each node provided by the page_list. For each page, find the neo4j node with it's name with Find_Node_By_Name(), and store the name in "node_a"
+        # Use the file_manager to extract the link_list for the current page for you, with Get_Links_From_Wiki_File(start_char#, end_char#)
+        # For each link on this page, find the neo4j node with it's name with Find_Node_By_Name(), and store the name in "node_b"
+        # Create a relationship "LINKSTO" frmo node_a, to node_b and add it to the Transaction queue with Transaction_Add_Create_Node(node_a, node_b)
+        # Then, check if we've reached our batch_size, and if we have, send the queue to the server, and print some statistics for us.
+
+        start_time = time.time()
+        batch_start = time.time()
+        self.Transaction_Open()
+
+        x = 1
+        page_number = 1
+        batch_count = 1
+        number_of_pages = len(page_list)
+        for page in page_list:
+            search_time = time.time()
+            node_a = self.Find_Node_By_Name(page[2])
+            # print("Search Duration: {}\tSearch of {}".format("%.3f" % (time.time() - search_time), page[2]))
+            page_link_list = file_manager.Get_Links_From_Wiki_File(page[0], page[1])
+            for link in page_link_list:
+                search_time = time.time()
+                node_b = self.Find_Node_By_Name(link)
+                # print("\tSearch Duration: {}\tSearch of {}".format("%.3f" % (time.time() - search_time), link))
+                # print("\tB:", link, node_b)
+                self.Transaction_Add_Create_Relationship(node_a, node_b, relationship="LINKSTO")
+                if x % batch_size == 0 or page_number == number_of_pages:
+                    # panic("Development STOP")
+                    self.Transaction_Close()
+                    batch_end = time.time()
+                    batch_count += 1
+                    print("Batch# {}\tRelationship# {}\tBatch Duration: {}s\tAvg Relationships per Second: {}".format(batch_count, x, "%.0f" % (batch_end - batch_start), "%.0f" % (x/(batch_end - start_time))))
+                    batch_start = time.time()
+                    self.Transaction_Open()
+                x += 1
+            page_number += 1
+
+    def Create_Nodes_On_Server_From_Name_Keyed_Dict(self, node_dict, batch_size=1000):
+        # Open a neo4j transaction using the file-manager self functions (Transaction_open, Transaction_...)
+        # Iterate through each node provided by the node_dict. The key of the dict is the string variable of the node's name.
+        # Add a new node to the neo4j transaction queue, passing the new node's name in with node_name.
+        # Then, check if we've reached our batch_size, and if we have, send the queue to the server, and print some statistics for us.
+
+        limit = len(node_dict)
+        start_time = time.time()
+        batch_start = time.time()
+        self.Transaction_Open()
+        for node_name in node_dict:
+            self.Transaction_Add_Create_Node(node_name)
+            if x % batch_size == 0 or x == limit:
+                self.Transaction_Close()
+                batch_end = time.time()
+                batch_count += 1
+                print("Batch# {}\tLink# {}\tBatch Duration: {}s\tAvg Links per Second: {}".format(batch_count, x, "%.0f" % (batch_end - batch_start), "%.0f" % (x/(batch_end - start_time))))
+                batch_start = time.time()
+                self.Transaction_Open()
+            x += 1
+
+
+        # x = 0
+        # batch_size = 1000
+        # batch_count = 0
+        # cm.Transaction_Open()
+        # start_time = time.time()
+        # batch_start = start_time
+        # for url in link_dict:
+        #     cm.Transaction_Add_Create_Node(url)
+        #
+        #     x += 1
+        #     if x % batch_size == 0:
+        #         cm.Transaction_Close()
+        #         batch_end = time.time()
+        #         batch_count += 1
+        #         print("Batch# {}\tLink# {}\tBatch Duration: {}s\tAvg Links per Second: {}".format(batch_count, x, "%.0f" % (batch_end - batch_start), "%.0f" % (x/(batch_end - start_time))))
+        #         batch_start = time.time()
+        #         cm.Transaction_Open()
+
+    def Transaction_Open(self):
+        # Open a neo4js Graph Transaction   ## http://py2neo.org/v3/database.html#py2neo.database.Transaction
+        self.tx = self.graph.begin()
+
+    def Transaction_Add_Create_Node(self, name, node_type="Article"):'
+        # Queue CREATE Node in Transaction.   ## http://py2neo.org/v3/database.html#py2neo.database.Transaction
+        self.tx.create(Node(node_type, name=name))
+
+    def Transaction_Add_Create_Relationship(self, node_a, node_b, relationship="LINKSTO"):
+        ## Queue CREATE Relationship in Transaction.  # http://py2neo.org/v3/database.html#py2neo.database.Transaction
+        self.tx.create(Relationship(node_a, relationship, node_b))
+
+    def Transaction_Close(self):
+        # Commit a neo4js Graph Transaction ## http://py2neo.org/v3/database.html#py2neo.database.Transaction
+        self.tx.commit()
+
+
+wiki_file = 'data/enwiki-20170820-pages-articles.xml'
+page_map_file = 'data/page_map.tsv'
+link_map_file = 'data/link_map.tsv'
+link_data_file = 'data/link_data.tsv'
+
+fm = FileManager(wiki_file, page_map_file, link_map_file, link_data_file)
+cm = ConnectionManager()
+
+# Step 1. Generate Page and Link lookup tables to facilitate further transactions
+fm.Generate_And_Save_TSV_Page_Map()
+fm.Generate_And_Save_TSV_Link_Map(page_list)
+
+# Step 2. Load the page and link lookup tables to be processed
+page_list = fm.Load_TSV_Page_Map()
+link_dict = fm.Load_TSV_Link_Map()
+
+# Step 3. Combine Page list and link_dict to one list & generate nodes for each article.
+#
+# The link dict currently contains objects that have been linked to from a page.
+# The link dict does NOT currently contain ALL of the pages themselves, it does however, contain some.
+# Here, we check and see if the link_dict contains the title of the page. If the link_dict does contain
+# the title, then, we HIT the dictionary obeject, and we set the value to be 0. Links that are also pages,
+# will have a link_id of 0. When we MISS the dictionary object, and do not find an entry, we create an
+# entry in the link_dict using the page title as the key.
+hit = 0
+miss = 0
+for page in page_list:
     try:
-        with open(file_name, 'w') as file_stream:
-            text = hostname + "," + username
-            file_stream.write(text)
-            file_stream.close()
-        print("Sucessfully saved profile!\n")
+        junk = link_dict[page[2]]
+        link_dict[page[2]] = 0
+        hit += 1
     except:
-        panic("Failed to save profile...")
+        link_dict[page[2]] = 0
+        miss += 1
+print("Hits: {}\tMisses: {}\nLength of Link Dict: {}".format(hit, miss, len(link_dict)))
+
+cm.Create_Nodes_On_Server_From_Name_Keyed_Dict(link_dict)
 
 
-
-
-
-def main():
-    start_time = time.time()
-    print("Starting Program...\n")
-
-    wiki_file = 'data/enwiki-20170820-pages-articles.xml'
-    default_profile_file_name = "user/profile.csv"
-    pages_tsv_file_name = "data/pages.tsv"
-    links_tsv_file_name = "data/links.tsv"
-
-    page_batch_size = 1
-
-    print("Would you like to connect to a neo4j server now?")
-    user_input = input("Please enter (y) or (n): ")
-    print()
-    if user_input == "y":
-        print("Use saved profile?")
-        user_input = input("Please enter (y) or (n): ")
-        print()
-        if user_input == "y":
-            server_and_port, username = load_neo4j_profile(default_profile_file_name)
-            print("Loaded the following information:\nHostname: {}\nUsername: {}\n".format(server_and_port, username))
-            print("Please provide a password. [eg: \"my#insecure#password123!!\"] (no quotes)\n(Use a secure password... It's just common sense.)")
-            password = getpass.getpass("Enter Password: ")
-            print()
-            try:
-                neo4j_graph = neo4j_connect(server_and_port, username, password)
-                del password
-            except:
-                del password
-                panic("Something unknown went wrong involving the neo4j connection process.")
-        elif user_input == "n":
-            print("Please provide a hostname and port. [eg: \"localhost:7474\"] (no quotes)")
-            server_and_port = input("Enter Hostname: ")
-            print()
-            print("Please provide a username. [eg: \"neo4j\"] (no quotes)")
-            username = input("Enter Username: ")
-            print()
-            print("Please provide a password. [eg: \"my#insecure#password123!!\"] (no quotes)\n(Use a secure password... It's just common sense.)")
-            password = getpass.getpass("Enter Password: ")
-            print()
-            try:
-                neo4j_graph = neo4j_connect(server_and_port, username, password)
-                del password
-                print("Would you like to save this Hostname & Username for future connections?")
-                user_input = input("Please enter (y) or (n): ")
-                print()
-                if user_input == "y":
-                    save_neo4j_profile(server_and_port, username, default_profile_file_name)
-                elif user_input == "n":
-                    pass
-                else:
-                    panic("Invalid user input [{}]".format(user_input))
-            except:
-                del password
-                panic("Something unknown went wrong involving the neo4j connection process.")
-            pass
-        else:
-            panic("Invalid user input [{}]".format(user_input))
-    elif user_input == "n":
-        pass
-    else:
-        panic("Invalid user input [{}]".format(user_input))
-
-
-    print("Would you like to load data from wiki_file or from pre-built tsv?")
-    print("1. wiki_file\t({})".format(wiki_file))
-    print("2. tsv files\t({})({})".format(pages_tsv_file_name, links_tsv_file_name))
-    user_input = input("Please Enter (1) or (2): ")
-    print()
-
-    if user_input == "1":
-        print("Would you like to save data from wiki_file to tsv files?")
-        user_input = input("Please Enter (y) or (n): ")
-        print()
-
-        if user_input == "y":
-            print("Would you like to use the save-on-batch method? (Less RAM intensive as variables cleared after each batch written to file.)")
-            print("\tIf program is inturrupted, files will be incomplete, but will contain prior batches data.")
-            print("WARNING: If you type (y) or (n), existing TSV files will be deleted to avoid duplicate data!")
-            user_input = input("Please Enter (y) or (n): ")
-            print()
-
-            if user_input == "y":
-                delete_file(pages_tsv_file_name)
-                delete_file(links_tsv_file_name)
-                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=False, save_on_batch=True, pages_tsv_file_name=pages_tsv_file_name, links_tsv_file_name=links_tsv_file_name )
-
-            elif user_input == "n":
-                delete_file(pages_tsv_file_name)
-                delete_file(links_tsv_file_name)
-
-                pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=False)
-
-                # Write pages dict to TSV
-                save_dict_to_tsv("data/pages.tsv", pages)
-                # Write links dict to TSV
-                save_dict_to_tsv("data/links.tsv", links)
-
-        elif user_input == "n":
-            pages, links, nodes = load_data_from_wiki_file(wiki_file, page_batch_size=page_batch_size, exit_after_first_batch=False)
-
-        else:
-            panic("Invalid user input [{}]".format(user_input))
-    elif user_input == "2":
-        print("Retrieving data from [{}] and [{}]...".format(pages_tsv_file_name, links_tsv_file_name))
-        pages, links = load_saved_tsv_files(pages_tsv_file_name, links_tsv_file_name)
-
-        print("Need to generate nodes. Code not yet implimented...")
-        panic("Code not yet implimented to generate nodes from TSV loaded files.")
-    else:
-        panic("Invalid user input [{}]".format(user_input))
-
-
-
-
-    # for page in pages:
-    #     print(page, pages[page])
-        # print("\tLinks:", links[page])
-
-    print("Program Complete...\nTotal Elapsed Time: {}s".format("%.2f" % (time.time() - start_time)))
-
-
-
-
-
-
-main()
+# Step 4. Iterate through the page_list and generate relationships for each page and their destination nodes.
+cm.Create_Relationships_On_Server_From_Page_List_And_Link_Dict(page_list, fm)

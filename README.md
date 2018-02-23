@@ -42,12 +42,30 @@ http://lxml.de/parsing.html
 
 V0.4
 
-- Add ability to define a relationship of a neo4j node.
+- Fix Parsing issue
 
 
 
 
 # ***Change Log:*** <br>
+
+
+V 0.3 -> 0.3.5
+- ***V0.3.5 is broken in that, there is some input parsing left to do on the memory map file mem_map, or, a quick hack may  be to place a, try: except: function, in a function of the Connect class when querying neo4j for a node in order to prevent receiving a None type object.***
+
+
+- Restructured code into classes, tearing away many of the low-level functions and abstracting them into classes.
+- Spent a lot of time trying to get multi-threading to work right, but, I'm letting the program remain single threaded at the moment. Hopefully the way I've re-structured the classes will facilitate threading at a later time.
+- Primary Classes:
+  - FileManager() # # # # # for loading, saving, or retrieving data for the nodes or wikipedia database.
+  - ConnectionManager() # for interacting with the neo4j server. Has queue-able transmission objects for communication.
+
+
+
+- Despite 0.3.5 being broken, it takes our first glimpse of the end program.
+
+![0-3-5](https://raw.githubusercontent.com/DotBowder/wiki_links/master/images/v0-3-5.png)
+
 
 V 0.2 -> 0.3
 
@@ -76,20 +94,20 @@ Created Functions
     - Handles user input and directs the user to the correct place.
 
 V 0.1 -> 0.2
-step_through_pages 
+step_through_pages
 - Now includes a lxml parser object and no longer requires trasversal of the whole dataset to generate a lookup table for the page numbers. The page nubmers COULD be useful, but, really isn't ideal for my purposes.
-process_page 
+process_page
 - Collects Wikipedia ID, Wikipedia Title, and WikiText Links, and merges them into a list
  [0:WIKIPEDIA_ID,1:WIKIPEDIA_TITLE,2-INF:WIKI_LINKS]
-find_wikitext_links 
+find_wikitext_links
 - parses a string looking for WikiText links (charactorised by "[[" as an opener and "]]" as a closer) Returns list of links found in a given string
-write_wikilinks_file 
+write_wikilinks_file
 - ingests masterlist (list of wikipedia ID, wikipedia Title, and wikipedia links located on article) and appents to a TSV formatted file.
 
 V 0.0 -> 0.1
-parse_page_lines 
+parse_page_lines
 - can step through a data file and generate a lookup table file, detailing the start and end lines containing "page" "/page" xml tags.
-step_through_pages 
+step_through_pages
 - can iterate through the lookup table file, and use the start and end lines to walk back through the data file knowing right where to stop for each page. *inefficient? Yes, I'll impliment an lxml parser object and feed it the xml data later.
-process_page 
+process_page
 - can look at the "page" xml object, and extract the wikipedia ID, Title, Text, and can determine if the Text of the page has a hyperlink.
