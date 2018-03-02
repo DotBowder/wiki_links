@@ -326,9 +326,11 @@ def Transmit_Data(hostname="bolt://localhost", username="neo4j", password="mysil
     if 'h' == user_input:
         Print_Help()
     elif '2' == user_input:
-        neo.Create_Relationships()
+        print("Code not yet implimented. See Changelog.")
+        # neo.Create_Relationships()
     elif '1' == user_input:
-        neo.Create_Nodes()
+        print("Code not yet implimented. See Changelog.")
+        # neo.Create_Nodes()
     neo.Close()
 
 
