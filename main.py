@@ -21,7 +21,7 @@ def Print_Program_Info():
     print("///////////////////////////////////////////////////////////////////////////////////////////")
     print("///                                                                                     ///")
     print("///                      WIKI LINK NEO4J DATA IMPORT TOOL                               ///")
-    print("///                      Version: 0.5                                                   ///")
+    print("///                      Version: 0.6                                                   ///")
     print("///                      Developed by: Daniel Bowder                                    ///")
     print("///                      https://github.com/DotBowder/wiki_links                        ///")
     print("///                                                                                     ///")
