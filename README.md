@@ -2,31 +2,28 @@
 
 
 # ***Summary***
-Goal: Create a neo4j graph/database, characterizing the relationships of wikipedia articles hyperlinking to eachother.
+Goal: Create a neo4j graph/database, characterizing the relationships of wikipedia articles hyperlinking to each other.
 
 Written by: Daniel Bowder <br>
 Started on: 2018-01-15 -- 2018 Jan 15 <br>
 Github: https://github.com/DotBowder <br>
 
-Version: 0.3 <br>
 
-This program takes in the XML, enwiki wikimedia data dump for Wikipedia pages.
+Dependencies: <br>
+- python3
+- neo4j python driver
 
-This program was designed to take the 64GB xml file, enwiki-20170820-pages-articles.xml,
-find hyperlinks on each page, and determine what wikipedia pages link to other wikipedia pages.
 
-The end goal of this program is to use neo4j to visualize, or just store, information
-pertaining to the page to page hyperlinking relationships of wikipedia.
+Version: 0.6 <br>
 
-This can serve as a tool for discovering how different topics realate to eachother,
-as characterized by wikipedia linking relationships.
+This program was designed to take the 64GB xml file, enwiki-20170820-pages-articles.xml, (see Helpful Links: Wikipedia Data Dump Torrents),
+find wikipedia hyperlinks on each page, and determine what wikipedia pages have links to other wikipedia pages.
 
-This program uses lxml (partially) to parse the xml file, and extract useful information such as
-website links, titles, and other information located on a wikipedia page. This information is then (currently) stored in a TSV file. The next step is to push this data to a neo4j database.
+The end goal of this program is to use neo4j to visualize, or just store, information pertaining to the page to page link relationships of wikipedia.
 
-I'm happy to say the wasteful full pass of the data file is no longer necessary for generating
-the original lookup table. The code now completes one full pass of the data file, and extracts
-the Wikipedia ID, Wikipedia Page Title, and all WikiText Hyperlinks on the webpage from this single pass.
+This can serve as a tool for discovering how different topics relate to each other, as characterized by wikipedia linking relationships.
+
+
 
 # ***Helpful links:*** <br>
 Wikipedia "wikitext" parsing
@@ -38,19 +35,81 @@ https://meta.wikimedia.org/wiki/Data_dump_torrents
 lxml syntax
 http://lxml.de/parsing.html
 
-# ***Next Goal:*** <br>
 
-V0.4
+# ***Next Goals:*** <br>
 
-- Fix Parsing issue
+***V0.7***
 
-
+- Copy TSV to "/var/lib/neo4j/import/" directory for less manual-intervention.
+- Add ability to import Nodes and Relationships via CSV IMPORT in the python program. (Getting errors saying using periodic commit won't work with a python driver transaction object)
 
 
 # ***Change Log:*** <br>
 
+***V0.5 -> 0.6***
 
-V 0.3 -> 0.3.5
+- Re-wrote neo4j connection class using the python neo4j driver.
+  - WIKI_LINK_NEOCONNECT.py
+  - 1. Built framework for neo4j connection manager.
+    - Ran into issues trying to import CSV into neo4j. The python driver transmit object does not appear to be able to use the "USING PERIODIC COMMIT" cypher operation.
+    - Once the master_ids.tsv, and relationships.tsv are generated and copied to /var/lib/neo4j/import/[...].tsv, then they can be imported using the following cypher queries.
+      - <code>
+        CREATE CONSTRAINT ON (n:Article) ASSERT n.name is UNIQUE;
+        </code>
+      - <code>
+        CREATE CONSTRAINT ON (n:Article) ASSERT n.id is UNIQUE;
+        </code>
+      - <code>
+        USING PERIODIC COMMIT
+        </code>
+      - <code>
+        LOAD CSV FROM 'file:///master_ids.tsv' AS line FIELDTERMINATOR '\t'
+        </code>
+      - <code>
+        CREATE (:Article {name: line[0], id: line[1]})
+        </code>
+      - <code>
+        USING PERIODIC COMMIT
+        </code>
+      - <code>
+        LOAD CSV FROM 'file:///relationships.tsv' AS line FIELDTERMINATOR '\t'
+        </code>
+      - <code>
+        MATCH (source:Article {id: line[0] })
+        </code>
+      - <code>
+        MATCH (dest:Article {id: line[1] })
+        </code>
+      - <code>
+        MERGE (source)-[:LINKSTO{strength: line[2]}]->(dest)
+        </code>
+  - 2. A CLI has been added as a front end and is largely contained in main.py. Probably could be replaced by something better, but it works.
+
+
+***V 0.4 -> 0.5***
+- Re-wrote wikipedia file extraction & organize into TSV format. Output TSV files to be imported to neo4j via Cyphertext CSV IMPORT.
+  - Parsing appears to work significantly better.
+  - WIKI_LINK_PARSE.py
+  - 1. Reduce the size of the wikipeida datastore by extracting only the <page><title>page titles</title></page> & [[wikilinks]].
+    - (default output: wiki_reduced_file.tsv)
+    - (Duration (FX6300 @ 3.6Ghz): 2100 seconds)
+  - 2. Combine the list of pages and links into one master list without duplicates. Assign a unique ID to each string and save to tsv.
+    - (default output: master_ids.tsv) *Used to CREATE list of Nodes into neo4j*
+    - (Duration (FX6300 @ 3.6Ghz): 450 seconds)
+  - 3. Create relationship TSV file based on the id number in the master_list
+    - (default output: relationships.tsv) *Used to MERGE list of Node Relationships into neo4j*
+    - (Duration (FX6300 @ 3.6Ghz): 1100 seconds)
+
+![0-6](https://raw.githubusercontent.com/DotBowder/wiki_links/master/images/v0-6.png)
+
+
+
+***V 0.3.5 -> 0.4***
+- Found the parsing issue.
+  - The code looks for a "[[" delimiter on the page of a wikipedia article as it's the opening symbol for a link that links to another wikipedia article. ( eg: [[Closure_(computer_programming)]] ) Unfortunately, a coding article, http://wikipedia.org/wiki/Closure_(computer_programming) has a block of example code (... return [[ ^int() { ...) that throws a link detected alert, and breaks the parsing. This has been dealt with in a hack-ey way by adding an if statement (in find_links()) excluding the detection of links that include either an open curly bracket, or a close curly bracket. This will need a better solution before V 1.0.
+
+
+***V 0.3 -> 0.3.5***
 - ***V0.3.5 is broken in that, there is some input parsing left to do on the memory map file mem_map, or, a quick hack may  be to place a, try: except: function, in a function of the Connect class when querying neo4j for a node in order to prevent receiving a None type object.***
 
 
@@ -67,12 +126,12 @@ V 0.3 -> 0.3.5
 ![0-3-5](https://raw.githubusercontent.com/DotBowder/wiki_links/master/images/v0-3-5.png)
 
 
-V 0.2 -> 0.3
+***V 0.2 -> 0.3***
 
 Complete re-write from the ground up.
 
 - Adds functionality to create nodes in neo4j in a batch manor.
-- Cleans up the code and add's a user cli front-end.
+- Cleans up the code and adds a user cli front-end.
 
 Created Functions
   - Data Stream Helpers
@@ -89,11 +148,10 @@ Created Functions
     - save_... * Saves file to input "file_name". Various save functions for TSV lookup files & neo4j server profiles
     - load_... * Loads data from various files. Wiki Database Files, TSV lookup files, & neo4j server profiles
     - delete_file * Writes over a file passed to the function.
-
   - Main
     - Handles user input and directs the user to the correct place.
 
-V 0.1 -> 0.2
+***V 0.1 -> 0.2***
 step_through_pages
 - Now includes a lxml parser object and no longer requires trasversal of the whole dataset to generate a lookup table for the page numbers. The page nubmers COULD be useful, but, really isn't ideal for my purposes.
 process_page
@@ -104,7 +162,7 @@ find_wikitext_links
 write_wikilinks_file
 - ingests masterlist (list of wikipedia ID, wikipedia Title, and wikipedia links located on article) and appents to a TSV formatted file.
 
-V 0.0 -> 0.1
+***V 0.0 -> 0.1***
 parse_page_lines
 - can step through a data file and generate a lookup table file, detailing the start and end lines containing "page" "/page" xml tags.
 step_through_pages
